@@ -1,0 +1,132 @@
+<?php
+
+use MessengerBot\Http\Middleware\EnsureJsonMessengerWebhook;
+use MessengerBot\Http\Middleware\VerifyMessengerSignature;
+
+return [
+
+    'app_id' => env('MESSENGER_BOT_APP_ID'),
+
+    'app_secret' => env('MESSENGER_BOT_APP_SECRET'),
+
+    'verify_token' => env('MESSENGER_BOT_VERIFY_TOKEN', ''),
+
+    /*
+    | Optional fallback Page token (e.g. tests). Prefer OAuth: token is stored in cache with expiry.
+    */
+    'page_access_token' => env('MESSENGER_BOT_PAGE_ACCESS_TOKEN', ''),
+
+    /*
+    | Long-lived Page token from OAuth (see README). Use a persistent cache store (redis, database) in production.
+    */
+    'page_token' => [
+        'cache_key' => env('MESSENGER_BOT_PAGE_TOKEN_CACHE_KEY', 'messenger_bot:page_token'),
+        'cache_store' => env('MESSENGER_BOT_PAGE_TOKEN_CACHE_STORE'),
+    ],
+
+    /*
+    | Facebook Login OAuth to obtain a long-lived Page access token without putting it in .env.
+    | Register "Valid OAuth Redirect URIs" in the Meta app to match redirect_uri (or the derived callback URL).
+    */
+    'oauth' => [
+        'auto_register' => env('MESSENGER_BOT_OAUTH_AUTO_REGISTER_ROUTES', true),
+        'path_prefix' => env('MESSENGER_BOT_OAUTH_PATH_PREFIX', 'messenger-bot/oauth'),
+        'redirect_uri' => env('MESSENGER_BOT_OAUTH_REDIRECT_URI'),
+        'preferred_page_id' => env('MESSENGER_BOT_OAUTH_PREFERRED_PAGE_ID'),
+        'success_redirect_path' => env('MESSENGER_BOT_OAUTH_SUCCESS_PATH', '/'),
+        'refresh_warning_seconds' => (int) env('MESSENGER_BOT_OAUTH_REFRESH_WARNING_SECONDS', 604800),
+        'scopes' => array_values(array_filter(array_map('trim', explode(',', env('MESSENGER_BOT_OAUTH_SCOPES') ?: 'pages_messaging,pages_manage_metadata,pages_read_engagement,pages_manage_engagement,pages_show_list')))),
+        'throttle_redirect' => env('MESSENGER_BOT_OAUTH_THROTTLE_REDIRECT', '20,1'),
+        'throttle_callback' => env('MESSENGER_BOT_OAUTH_THROTTLE_CALLBACK', '30,1'),
+    ],
+
+    'graph_version' => env('MESSENGER_BOT_GRAPH_VERSION', 'v24.0'),
+
+    'webhook' => [
+        /*
+        | When true, the webhook route is registered from MessengerBotServiceProvider::boot()
+        | outside Laravel's routes/web.php "web" middleware group (which forces CSRF and breaks Meta POSTs with HTTP 419).
+        | Set to false only if you register MessengerBot::routes() yourself from a non-web route file or bootstrap "then" callback.
+        */
+        'auto_register' => env('MESSENGER_BOT_AUTO_REGISTER_ROUTES', true),
+        'path' => env('MESSENGER_BOT_WEBHOOK_PATH', '/webhook/messenger'),
+        'max_body_bytes' => (int) env('MESSENGER_BOT_MAX_BODY_BYTES', 262144),
+        'signature_enabled' => env('MESSENGER_BOT_SIGNATURE_ENABLED', true),
+        /*
+        | Do not use the "web" middleware group here: it enables CSRF verification and Meta's
+        | POST webhooks will fail with HTTP 419 (Page Expired). Use only the middleware below,
+        | or add non-session middleware (e.g. "api") if you need it — then exclude this path
+        | from CSRF in your App\Http\Middleware\VerifyCsrfToken $except if you must use "web".
+        */
+        'middleware' => [
+            EnsureJsonMessengerWebhook::class,
+            VerifyMessengerSignature::class,
+        ],
+    ],
+
+    'conversation' => [
+        'driver' => env('MESSENGER_BOT_CONVERSATION_DRIVER', 'cache'),
+        'cache_store' => env('MESSENGER_BOT_CACHE_STORE'),
+        'cache_prefix' => env('MESSENGER_BOT_CACHE_PREFIX', 'messenger_bot:conv:'),
+        'ttl_minutes' => (int) env('MESSENGER_BOT_CACHE_TTL', 120),
+    ],
+
+    'logging' => [
+        'channel' => env('MESSENGER_BOT_LOG_CHANNEL'),
+    ],
+
+    /*
+    | Informational: Page webhook fields commonly subscribed in Meta App Dashboard.
+    */
+    'webhook_fields' => [
+        'messages',
+        'messaging_postbacks',
+        'messaging_optins',
+        'message_deliveries',
+        'message_reads',
+        'message_echoes',
+        'feed',
+    ],
+
+    /*
+    | Required by Meta when you set persistent_menu: welcome "Get Started" postback payload.
+    | Register MessengerBot::payload() for this string (e.g. a short welcome message).
+    */
+    'get_started' => [
+        'payload' => env('MESSENGER_BOT_GET_STARTED_PAYLOAD', 'GET_STARTED'),
+        /*
+        | Auto-reply when the user taps Get Started and you have not registered MessengerBot::payload().
+        | Set MESSENGER_BOT_GET_STARTED_REPLY to an empty string in .env to disable.
+        */
+        'default_reply' => env('MESSENGER_BOT_GET_STARTED_REPLY', 'Welcome! Use the menu below.'),
+    ],
+
+    /*
+    | Persistent menu (Messenger Profile API). Set to null or [] to skip menu sync on install/sync.
+    | Postback payloads must match your MessengerBot::payload() registrations.
+    */
+    'persistent_menu' => [
+        [
+            'locale' => 'default',
+            'composer_input_disabled' => false,
+            'call_to_actions' => [
+                [
+                    'type' => 'postback',
+                    'title' => 'Products',
+                    'payload' => 'SHOW_PRODUCTS',
+                ],
+                [
+                    'type' => 'postback',
+                    'title' => 'Receipt',
+                    'payload' => 'DEMO_RECEIPT',
+                ],
+                [
+                    'type' => 'postback',
+                    'title' => 'Support',
+                    'payload' => 'HUMAN',
+                ],
+            ],
+        ],
+    ],
+
+];

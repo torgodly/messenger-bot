@@ -1,0 +1,73 @@
+{
+    "name": "torgodly/messenger-bot",
+    "description": "Facebook Messenger webhooks and Page comments for Laravel (BotMan-style API, no BotMan dependency).",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "facebook",
+        "messenger",
+        "webhook",
+        "chatbot",
+        "graph-api",
+        "oauth",
+        "facebook-messenger"
+    ],
+    "authors": [
+        {
+            "name": "messenger-bot contributors",
+            "role": "Developer"
+        }
+    ],
+    "homepage": "https://packagist.org/packages/torgodly/messenger-bot",
+    "require": {
+        "php": "^8.3",
+        "ext-json": "*",
+        "illuminate/support": "^12.0|^13.0",
+        "illuminate/http": "^12.0|^13.0",
+        "illuminate/routing": "^12.0|^13.0",
+        "illuminate/events": "^12.0|^13.0",
+        "illuminate/contracts": "^12.0|^13.0",
+        "illuminate/console": "^12.0|^13.0",
+        "illuminate/cache": "^12.0|^13.0"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.27",
+        "orchestra/testbench": "^10.48|^11.0",
+        "pestphp/pest": "^4.0",
+        "phpunit/phpunit": "^11.5|^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "MessengerBot\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MessengerBot\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "MessengerBot\\MessengerBotServiceProvider"
+            ],
+            "aliases": {
+                "MessengerBot": "MessengerBot\\Facades\\MessengerBot"
+            }
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "test-coverage": "pest --coverage",
+        "lint": "pint --test"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}

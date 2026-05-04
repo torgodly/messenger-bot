@@ -1,0 +1,268 @@
+<?php
+
+namespace MessengerBot\Console;
+
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Str;
+use MessengerBot\Http\PageAccessTokenProvider;
+use MessengerBot\Profile\PageProfileCoordinator;
+use MessengerBot\Support\GraphContainerReset;
+use MessengerBot\Support\MessengerBotEnvWriter;
+
+class InstallMessengerBotCommand extends Command
+{
+    protected $signature = 'messenger-bot:install
+                            {--force : Overwrite published messenger-bot config if it already exists}
+                            {--skip-subscribe : Do not POST /me/subscribed_apps}
+                            {--skip-menu : Do not POST persistent_menu to messenger_profile}
+                            {--skip-token-check : Skip Graph token validation (GET /me) before subscribe/menu}';
+
+    protected $description = 'Publish config, ensure .env keys, subscribe Page webhook fields, sync persistent menu, and print Meta checklist';
+
+    public function handle(): int
+    {
+        $this->call('vendor:publish', [
+            '--tag' => 'messenger-bot-config',
+            '--force' => (bool) $this->option('force'),
+        ]);
+
+        $this->newLine();
+
+        $basePath = (string) $this->laravel->basePath();
+        $envPath = $basePath.DIRECTORY_SEPARATOR.'.env';
+        $examplePath = $basePath.DIRECTORY_SEPARATOR.'.env.example';
+
+        if (! is_file($envPath)) {
+            if (is_file($examplePath)) {
+                if (! @copy($examplePath, $envPath)) {
+                    $this->error('Could not create .env from .env.example. Copy it manually, then re-run this command.');
+
+                    return self::FAILURE;
+                }
+                $this->info('Created .env from .env.example.');
+            } else {
+                if (file_put_contents($envPath, '') === false) {
+                    $this->error('Could not create .env in the application root.');
+
+                    return self::FAILURE;
+                }
+                $this->warn('Created an empty .env (no .env.example found).');
+            }
+        }
+
+        $writer = MessengerBotEnvWriter::forApplicationBasePath($basePath);
+        $writer->appendMissing($this->messengerEnvDefaults());
+
+        $verify = $writer->get('MESSENGER_BOT_VERIFY_TOKEN');
+        if ($verify === null || trim($verify) === '') {
+            $defaultVerify = Str::random(32);
+            if ($this->input->isInteractive()) {
+                $entered = (string) $this->ask('Webhook verify token (Meta → your Page → Webhooks)', $defaultVerify);
+                $verify = trim($entered) === '' ? $defaultVerify : trim($entered);
+            } else {
+                $verify = $defaultVerify;
+                $this->line('Generated MESSENGER_BOT_VERIFY_TOKEN for non-interactive install.');
+            }
+            $writer->put('MESSENGER_BOT_VERIFY_TOKEN', $verify);
+        }
+
+        $this->applyMessengerConfigFromEnv($writer);
+
+        $pageTokenProvider = $this->laravel->make(PageAccessTokenProvider::class);
+        if (trim($pageTokenProvider->token()) === '') {
+            $connect = $this->oauthConnectUrl();
+            if (! $this->input->isInteractive()) {
+                $this->error('No Page access token yet. Open this URL in a browser to connect Facebook, then run install again:');
+                $this->line($connect);
+                $this->printChecklist();
+
+                return self::FAILURE;
+            }
+            $this->warn('No Page access token in cache (and no optional MESSENGER_BOT_PAGE_ACCESS_TOKEN in .env).');
+            $this->line('Open in a browser: '.$connect);
+            if (! $this->confirm('Have you finished the Facebook login and returned to this app?', false)) {
+                $this->printChecklist();
+
+                return self::FAILURE;
+            }
+            GraphContainerReset::forget($this->laravel);
+            $pageTokenProvider = $this->laravel->make(PageAccessTokenProvider::class);
+            if (trim($pageTokenProvider->token()) === '') {
+                $this->error('Token still missing. Complete OAuth using the URL above, then run: php artisan messenger-bot:install');
+                $this->printChecklist();
+
+                return self::FAILURE;
+            }
+        }
+
+        GraphContainerReset::forget($this->laravel);
+
+        if (
+            (bool) config('messenger-bot.webhook.signature_enabled', true)
+            && trim((string) config('messenger-bot.app_secret', '')) === ''
+        ) {
+            $this->warn('MESSENGER_BOT_APP_SECRET is empty while signature verification is enabled — webhooks skip signature check until you set the App Secret.');
+        }
+
+        $coordinator = $this->laravel->make(PageProfileCoordinator::class);
+
+        $exit = $coordinator->runForConsole(
+            $this,
+            ! $this->option('skip-subscribe'),
+            ! $this->option('skip-menu'),
+            (bool) $this->option('skip-token-check'),
+        );
+
+        if ($exit !== self::SUCCESS) {
+            return $exit;
+        }
+
+        $this->newLine();
+        $this->printChecklist();
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    protected function messengerEnvDefaults(): array
+    {
+        return [
+            'MESSENGER_BOT_APP_ID' => '',
+            'MESSENGER_BOT_APP_SECRET' => '',
+            'MESSENGER_BOT_VERIFY_TOKEN' => '',
+            'MESSENGER_BOT_GRAPH_VERSION' => 'v24.0',
+            'MESSENGER_BOT_AUTO_REGISTER_ROUTES' => 'true',
+            'MESSENGER_BOT_WEBHOOK_PATH' => '/webhook/messenger',
+            'MESSENGER_BOT_SIGNATURE_ENABLED' => 'true',
+            'MESSENGER_BOT_CONVERSATION_DRIVER' => 'cache',
+            'MESSENGER_BOT_CACHE_STORE' => '',
+            'MESSENGER_BOT_CACHE_PREFIX' => 'messenger_bot:conv:',
+            'MESSENGER_BOT_CACHE_TTL' => '120',
+            'MESSENGER_BOT_MAX_BODY_BYTES' => '262144',
+            'MESSENGER_BOT_LOG_CHANNEL' => '',
+            'MESSENGER_BOT_PAGE_TOKEN_CACHE_KEY' => 'messenger_bot:page_token',
+            'MESSENGER_BOT_PAGE_TOKEN_CACHE_STORE' => '',
+            'MESSENGER_BOT_OAUTH_AUTO_REGISTER_ROUTES' => 'true',
+            'MESSENGER_BOT_OAUTH_PATH_PREFIX' => 'messenger-bot/oauth',
+            'MESSENGER_BOT_OAUTH_REDIRECT_URI' => '',
+            'MESSENGER_BOT_OAUTH_PREFERRED_PAGE_ID' => '',
+            'MESSENGER_BOT_OAUTH_SUCCESS_PATH' => '/',
+            'MESSENGER_BOT_OAUTH_REFRESH_WARNING_SECONDS' => '604800',
+            'MESSENGER_BOT_OAUTH_SCOPES' => 'pages_messaging,pages_manage_metadata,pages_read_engagement,pages_manage_engagement,pages_show_list',
+            'MESSENGER_BOT_GET_STARTED_PAYLOAD' => 'GET_STARTED',
+        ];
+    }
+
+    protected function oauthConnectUrl(): string
+    {
+        if (! Route::has('messenger-bot.oauth.redirect')) {
+            return '(OAuth routes disabled — set MESSENGER_BOT_OAUTH_AUTO_REGISTER_ROUTES=true or MESSENGER_BOT_PAGE_ACCESS_TOKEN)';
+        }
+
+        return route('messenger-bot.oauth.redirect', [], true);
+    }
+
+    protected function applyMessengerConfigFromEnv(MessengerBotEnvWriter $writer): void
+    {
+        $line = static function (string $key) use ($writer): ?string {
+            if (! $writer->hasLine($key)) {
+                return null;
+            }
+
+            return $writer->get($key);
+        };
+
+        $string = static function (string $key, string $default = '') use ($line): string {
+            $v = $line($key);
+            if ($v === null) {
+                return $default;
+            }
+
+            return $v;
+        };
+
+        $nullableTrimmed = static function (string $key) use ($line): ?string {
+            $v = $line($key);
+            if ($v === null) {
+                return null;
+            }
+            $t = trim($v);
+
+            return $t === '' ? null : $t;
+        };
+
+        $bool = static function (string $key, bool $default) use ($line): bool {
+            $v = $line($key);
+            if ($v === null || trim($v) === '') {
+                return $default;
+            }
+
+            return filter_var(trim($v), FILTER_VALIDATE_BOOLEAN);
+        };
+
+        $int = static function (string $key, int $default) use ($line): int {
+            $v = $line($key);
+            if ($v === null || trim($v) === '') {
+                return $default;
+            }
+
+            return (int) trim($v);
+        };
+
+        $scopeLine = $line('MESSENGER_BOT_OAUTH_SCOPES');
+        $scopes = ($scopeLine !== null && trim($scopeLine) !== '')
+            ? array_values(array_filter(array_map('trim', explode(',', $scopeLine))))
+            : [
+                'pages_messaging',
+                'pages_manage_metadata',
+                'pages_read_engagement',
+                'pages_manage_engagement',
+                'pages_show_list',
+            ];
+
+        config([
+            'messenger-bot.app_id' => $nullableTrimmed('MESSENGER_BOT_APP_ID'),
+            'messenger-bot.app_secret' => $string('MESSENGER_BOT_APP_SECRET'),
+            'messenger-bot.verify_token' => $string('MESSENGER_BOT_VERIFY_TOKEN'),
+            'messenger-bot.page_access_token' => $string('MESSENGER_BOT_PAGE_ACCESS_TOKEN'),
+            'messenger-bot.graph_version' => $string('MESSENGER_BOT_GRAPH_VERSION', 'v24.0'),
+            'messenger-bot.webhook.auto_register' => $bool('MESSENGER_BOT_AUTO_REGISTER_ROUTES', true),
+            'messenger-bot.webhook.path' => $string('MESSENGER_BOT_WEBHOOK_PATH', '/webhook/messenger'),
+            'messenger-bot.webhook.max_body_bytes' => $int('MESSENGER_BOT_MAX_BODY_BYTES', 262144),
+            'messenger-bot.webhook.signature_enabled' => $bool('MESSENGER_BOT_SIGNATURE_ENABLED', true),
+            'messenger-bot.conversation.driver' => $string('MESSENGER_BOT_CONVERSATION_DRIVER', 'cache'),
+            'messenger-bot.conversation.cache_store' => $nullableTrimmed('MESSENGER_BOT_CACHE_STORE'),
+            'messenger-bot.conversation.cache_prefix' => $string('MESSENGER_BOT_CACHE_PREFIX', 'messenger_bot:conv:'),
+            'messenger-bot.conversation.ttl_minutes' => $int('MESSENGER_BOT_CACHE_TTL', 120),
+            'messenger-bot.logging.channel' => $nullableTrimmed('MESSENGER_BOT_LOG_CHANNEL'),
+            'messenger-bot.page_token.cache_key' => $string('MESSENGER_BOT_PAGE_TOKEN_CACHE_KEY', 'messenger_bot:page_token'),
+            'messenger-bot.page_token.cache_store' => $nullableTrimmed('MESSENGER_BOT_PAGE_TOKEN_CACHE_STORE'),
+            'messenger-bot.oauth.auto_register' => $bool('MESSENGER_BOT_OAUTH_AUTO_REGISTER_ROUTES', true),
+            'messenger-bot.oauth.path_prefix' => $string('MESSENGER_BOT_OAUTH_PATH_PREFIX', 'messenger-bot/oauth'),
+            'messenger-bot.oauth.redirect_uri' => $nullableTrimmed('MESSENGER_BOT_OAUTH_REDIRECT_URI'),
+            'messenger-bot.oauth.preferred_page_id' => $nullableTrimmed('MESSENGER_BOT_OAUTH_PREFERRED_PAGE_ID'),
+            'messenger-bot.oauth.success_redirect_path' => $string('MESSENGER_BOT_OAUTH_SUCCESS_PATH', '/'),
+            'messenger-bot.oauth.refresh_warning_seconds' => $int('MESSENGER_BOT_OAUTH_REFRESH_WARNING_SECONDS', 604800),
+            'messenger-bot.oauth.scopes' => $scopes,
+            'messenger-bot.get_started.payload' => $string('MESSENGER_BOT_GET_STARTED_PAYLOAD', 'GET_STARTED'),
+            'messenger-bot.get_started.default_reply' => $string('MESSENGER_BOT_GET_STARTED_REPLY', 'Welcome! Use the menu below.'),
+            'messenger-bot.oauth.throttle_redirect' => $string('MESSENGER_BOT_OAUTH_THROTTLE_REDIRECT', '20,1'),
+            'messenger-bot.oauth.throttle_callback' => $string('MESSENGER_BOT_OAUTH_THROTTLE_CALLBACK', '30,1'),
+        ]);
+    }
+
+    protected function printChecklist(): void
+    {
+        $path = (string) config('messenger-bot.webhook.path', '/webhook/messenger');
+        $this->info('Meta checklist (Graph '.config('messenger-bot.graph_version', 'v24.0').') — full details: package README');
+        $this->line('1. App: Messenger + Webhooks (Page). Connect your Page.');
+        $this->line('2. Page token: use OAuth ('.$this->oauthConnectUrl().') or optional MESSENGER_BOT_PAGE_ACCESS_TOKEN in .env for tests.');
+        $this->line('3. Dashboard: Webhooks → Page → Callback URL = {APP_URL}'.$path.' — Verify token = MESSENGER_BOT_VERIFY_TOKEN — Verify and Save.');
+        $this->line('4. Dashboard: enable the same webhook fields as `webhook_fields` in config (or rely on `messenger-bot:install` / `messenger-bot:sync-page` for subscribed_apps).');
+        $this->line('5. Re-run `php artisan messenger-bot:sync-page` after token or field list changes.');
+        $this->newLine();
+    }
+}
