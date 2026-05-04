@@ -13,13 +13,13 @@ composer require torgodly/messenger-bot
 php artisan vendor:publish --tag=messenger-bot-config
 ```
 
-Then set `.env` (see `config/messenger-bot.php` for every key). Easiest path:
+Then run:
 
 ```bash
 php artisan messenger-bot:install
 ```
 
-That publishes config, adds missing `MESSENGER_BOT_*` lines to `.env`, and (when you have a Page token) subscribes webhooks and syncs the menu.
+It publishes config, adds a short **Messenger** block to `.env` (with a blank line above it), asks for **App ID** and **App Secret** if they are still empty, then continues with webhook verify token and OAuth. Other settings use defaults from `config/messenger-bot.php` until you add more `MESSENGER_BOT_*` lines yourself.
 
 ---
 

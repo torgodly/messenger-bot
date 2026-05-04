@@ -52,7 +52,7 @@ class InstallMessengerBotCommand extends Command
         }
 
         $writer = MessengerBotEnvWriter::forApplicationBasePath($basePath);
-        $writer->appendMissing($this->messengerEnvDefaults());
+        $writer->appendMessengerStarterIfMissing();
 
         $verify = $writer->get('MESSENGER_BOT_VERIFY_TOKEN');
         if ($verify === null || trim($verify) === '') {
@@ -65,6 +65,10 @@ class InstallMessengerBotCommand extends Command
                 $this->line('Generated MESSENGER_BOT_VERIFY_TOKEN for non-interactive install.');
             }
             $writer->put('MESSENGER_BOT_VERIFY_TOKEN', $verify);
+        }
+
+        if ($this->ensureMetaAppCredentials($writer) !== self::SUCCESS) {
+            return self::FAILURE;
         }
 
         $this->applyMessengerConfigFromEnv($writer);
@@ -125,35 +129,43 @@ class InstallMessengerBotCommand extends Command
     }
 
     /**
-     * @return array<string, string>
+     * Prompt for Meta App ID and App Secret when .env lines are empty (before OAuth URL / Graph steps).
      */
-    protected function messengerEnvDefaults(): array
+    protected function ensureMetaAppCredentials(MessengerBotEnvWriter $writer): int
     {
-        return [
-            'MESSENGER_BOT_APP_ID' => '',
-            'MESSENGER_BOT_APP_SECRET' => '',
-            'MESSENGER_BOT_VERIFY_TOKEN' => '',
-            'MESSENGER_BOT_GRAPH_VERSION' => 'v24.0',
-            'MESSENGER_BOT_AUTO_REGISTER_ROUTES' => 'true',
-            'MESSENGER_BOT_WEBHOOK_PATH' => '/webhook/messenger',
-            'MESSENGER_BOT_SIGNATURE_ENABLED' => 'true',
-            'MESSENGER_BOT_CONVERSATION_DRIVER' => 'cache',
-            'MESSENGER_BOT_CACHE_STORE' => '',
-            'MESSENGER_BOT_CACHE_PREFIX' => 'messenger_bot:conv:',
-            'MESSENGER_BOT_CACHE_TTL' => '120',
-            'MESSENGER_BOT_MAX_BODY_BYTES' => '262144',
-            'MESSENGER_BOT_LOG_CHANNEL' => '',
-            'MESSENGER_BOT_PAGE_TOKEN_CACHE_KEY' => 'messenger_bot:page_token',
-            'MESSENGER_BOT_PAGE_TOKEN_CACHE_STORE' => '',
-            'MESSENGER_BOT_OAUTH_AUTO_REGISTER_ROUTES' => 'true',
-            'MESSENGER_BOT_OAUTH_PATH_PREFIX' => 'messenger-bot/oauth',
-            'MESSENGER_BOT_OAUTH_REDIRECT_URI' => '',
-            'MESSENGER_BOT_OAUTH_PREFERRED_PAGE_ID' => '',
-            'MESSENGER_BOT_OAUTH_SUCCESS_PATH' => '/',
-            'MESSENGER_BOT_OAUTH_REFRESH_WARNING_SECONDS' => '604800',
-            'MESSENGER_BOT_OAUTH_SCOPES' => 'pages_messaging,pages_manage_metadata,pages_read_engagement,pages_manage_engagement,pages_show_list',
-            'MESSENGER_BOT_GET_STARTED_PAYLOAD' => 'GET_STARTED',
-        ];
+        $trimmed = fn (string $key): string => trim((string) ($writer->get($key) ?? ''));
+
+        if ($trimmed('MESSENGER_BOT_APP_ID') === '') {
+            if (! $this->input->isInteractive()) {
+                $this->error('MESSENGER_BOT_APP_ID is empty. Set it in .env or run this command interactively.');
+
+                return self::FAILURE;
+            }
+            $id = trim((string) $this->ask('Facebook App ID (Meta → App settings → Basic)'));
+            if ($id === '') {
+                $this->error('App ID is required for OAuth and Graph.');
+
+                return self::FAILURE;
+            }
+            $writer->put('MESSENGER_BOT_APP_ID', $id);
+        }
+
+        if ($trimmed('MESSENGER_BOT_APP_SECRET') === '') {
+            if (! $this->input->isInteractive()) {
+                $this->error('MESSENGER_BOT_APP_SECRET is empty. Set it in .env or run this command interactively.');
+
+                return self::FAILURE;
+            }
+            $secret = (string) $this->secret('Facebook App Secret (Meta → App settings → Basic)');
+            if (trim($secret) === '') {
+                $this->error('App Secret is required for OAuth and webhook signature verification.');
+
+                return self::FAILURE;
+            }
+            $writer->put('MESSENGER_BOT_APP_SECRET', $secret);
+        }
+
+        return self::SUCCESS;
     }
 
     protected function oauthConnectUrl(): string

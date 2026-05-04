@@ -92,6 +92,40 @@ class MessengerBotEnvWriter
     }
 
     /**
+     * Append a small commented starter block (App ID, App Secret, and verify token if missing).
+     * Skips if this section was already added or {@code MESSENGER_BOT_APP_ID} exists.
+     */
+    public function appendMessengerStarterIfMissing(): void
+    {
+        if ($this->exists()) {
+            $raw = (string) file_get_contents($this->path);
+            if (str_contains($raw, '# --- torgodly/messenger-bot ---') || $this->hasLine('MESSENGER_BOT_APP_ID')) {
+                return;
+            }
+        }
+
+        $lines = [
+            '# --- torgodly/messenger-bot ---',
+            '# Optional: add more MESSENGER_BOT_* lines here to override config/messenger-bot.php',
+            '',
+            'MESSENGER_BOT_APP_ID=',
+            'MESSENGER_BOT_APP_SECRET=',
+        ];
+        if (! $this->hasLine('MESSENGER_BOT_VERIFY_TOKEN')) {
+            $lines[] = 'MESSENGER_BOT_VERIFY_TOKEN=';
+        }
+        $lines[] = '';
+        $block = implode("\n", $lines);
+
+        $content = $this->exists() ? rtrim((string) file_get_contents($this->path)) : '';
+        if ($content !== '') {
+            $content .= "\n\n";
+        }
+        $content .= $block;
+        file_put_contents($this->path, $content);
+    }
+
+    /**
      * Append keys that are not already defined (line missing entirely).
      *
      * @param  array<string, string>  $pairs
