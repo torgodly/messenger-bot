@@ -71,7 +71,11 @@ class MessengerBotEnvWriter
         if (preg_match($pattern, $content)) {
             $content = preg_replace($pattern, $line, $content);
         } else {
-            $content = rtrim($content).(str_ends_with($content, "\n") || $content === '' ? '' : "\n").$line."\n";
+            $content = rtrim($content);
+            if ($content !== '') {
+                $content .= "\n";
+            }
+            $content .= $line."\n";
         }
 
         file_put_contents($this->path, $content);
