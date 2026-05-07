@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.1.0] - 2026-05-07
+## [2.0.0] - 2026-05-07
 
 ### Added
 
@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ConfigurableMessengerTenantResolver` now extends `EloquentMessengerTenantResolver` (single code path for Eloquent Page-ID lookup).
 - `EloquentMessengerTenantResolver` validates model class and column before querying.
+
+Composer constraint: use **`^2.0`** when depending on this line (see `composer.json` `version` and Git tag **`v2.0.0`**).
 
 ## [1.0.0] - 2026-05-04
 
