@@ -1,0 +1,16 @@
+<?php
+
+/**
+ * Optional: only when you need a custom TenantResolver class (e.g. extra joins or non-default columns).
+ * Most apps can set MESSENGER_BOT_TENANCY_CONNECTION_MODEL instead — no subclass required.
+ *
+ * final class StoreMessengerTenantResolver extends \MessengerBot\Laravel\Tenancy\EloquentMessengerTenantResolver
+ * {
+ *     protected function modelClass(): string
+ *     {
+ *         return \App\Models\Store::class;
+ *     }
+ *
+ *     // protected function facebookPageIdColumn(): string { return 'fb_page_id'; }
+ * }
+ */

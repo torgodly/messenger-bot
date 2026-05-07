@@ -1,0 +1,27 @@
+<?php
+
+/**
+ * Example migration for host applications (copy to database/migrations).
+ * The package does not auto-load this file.
+ */
+return new class extends \Illuminate\Database\Migrations\Migration
+{
+    public function up(): void
+    {
+        \Illuminate\Support\Facades\Schema::create('mb_connections', function (\Illuminate\Database\Schema\Blueprint $table) {
+            $table->ulid('id')->primary();
+            $table->string('tenant_id')->index();
+            $table->string('page_id')->index();
+            $table->string('page_name')->nullable();
+            $table->text('access_token_cipher');
+            $table->unsignedInteger('expires_at')->nullable();
+            $table->string('status')->default('active')->index();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        \Illuminate\Support\Facades\Schema::dropIfExists('mb_connections');
+    }
+};
