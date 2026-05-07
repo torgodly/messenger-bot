@@ -5,7 +5,7 @@ namespace MessengerBot\Console;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Route;
 use MessengerBot\Contracts\PageAccessTokenRepository;
-use MessengerBot\Http\PageAccessTokenProvider;
+use MessengerBot\Contracts\PageAccessTokenSource;
 
 class MessengerBotTokenStatusCommand extends Command
 {
@@ -13,7 +13,7 @@ class MessengerBotTokenStatusCommand extends Command
 
     protected $description = 'Show cached Page token expiry and OAuth reconnect URL (token value is never printed)';
 
-    public function handle(PageAccessTokenRepository $repository, PageAccessTokenProvider $provider): int
+    public function handle(PageAccessTokenRepository $repository, PageAccessTokenSource $provider): int
     {
         $buffer = (int) config('messenger-bot.oauth.refresh_warning_seconds', 604800);
 

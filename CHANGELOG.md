@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Multi-tenant Messenger support: `MessengerConnectable`, `InteractsWithMessengerConnection`, configurable Page-ID resolver (`messenger-bot.tenancy.connection_model`), `MessengerOAuth` / signed OAuth state, connection-scoped tokens and posts cache helpers, `MessengerCurrentConnection`, `ConfigurableMessengerTenantResolver`, and `php artisan messenger-bot:install --tenant [--model=]`.
+- `README-EXTERNAL-RULES.md` cookbook for DB-driven rules and menus in the host application.
+
+### Changed
+
+- `EloquentMessengerTenantResolver` validates model class and column before querying (shared with the configurable resolver).
+
 ## [1.0.0] - 2026-05-04
 
 ### Added

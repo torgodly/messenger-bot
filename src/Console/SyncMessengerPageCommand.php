@@ -4,7 +4,7 @@ namespace MessengerBot\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Route;
-use MessengerBot\Http\PageAccessTokenProvider;
+use MessengerBot\Contracts\PageAccessTokenSource;
 use MessengerBot\Profile\PageProfileCoordinator;
 
 class SyncMessengerPageCommand extends Command
@@ -18,7 +18,7 @@ class SyncMessengerPageCommand extends Command
 
     public function handle(PageProfileCoordinator $coordinator): int
     {
-        $token = app(PageAccessTokenProvider::class)->token();
+        $token = app(PageAccessTokenSource::class)->token();
         if (trim($token) === '') {
             $hint = Route::has('messenger-bot.oauth.redirect')
                 ? 'Complete OAuth: '.route('messenger-bot.oauth.redirect', [], true)

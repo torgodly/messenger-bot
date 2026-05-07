@@ -5,7 +5,7 @@ namespace MessengerBot\Console;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
-use MessengerBot\Http\PageAccessTokenProvider;
+use MessengerBot\Contracts\PageAccessTokenSource;
 use MessengerBot\Profile\PageProfileCoordinator;
 use MessengerBot\Support\GraphContainerReset;
 use MessengerBot\Support\MessengerBotEnvWriter;
@@ -14,6 +14,8 @@ class InstallMessengerBotCommand extends Command
 {
     protected $signature = 'messenger-bot:install
                             {--force : Overwrite published messenger-bot config if it already exists}
+                            {--tenant : Write multi-tenant .env keys (uses connection_model resolver; no custom resolver class required)}
+                            {--model= : Eloquent model FQCN implementing MessengerConnectable (sets MESSENGER_BOT_TENANCY_CONNECTION_MODEL)}
                             {--skip-subscribe : Do not POST /me/subscribed_apps}
                             {--skip-menu : Do not POST persistent_menu to messenger_profile}
                             {--skip-token-check : Skip Graph token validation (GET /me) before subscribe/menu}';
@@ -71,9 +73,13 @@ class InstallMessengerBotCommand extends Command
             return self::FAILURE;
         }
 
+        if ((bool) $this->option('tenant')) {
+            $this->applyTenantEnvDefaults($writer);
+        }
+
         $this->applyMessengerConfigFromEnv($writer);
 
-        $pageTokenProvider = $this->laravel->make(PageAccessTokenProvider::class);
+        $pageTokenProvider = $this->laravel->make(PageAccessTokenSource::class);
         if (trim($pageTokenProvider->token()) === '') {
             $connect = $this->oauthConnectUrl();
             if (! $this->input->isInteractive()) {
@@ -91,7 +97,7 @@ class InstallMessengerBotCommand extends Command
                 return self::FAILURE;
             }
             GraphContainerReset::forget($this->laravel);
-            $pageTokenProvider = $this->laravel->make(PageAccessTokenProvider::class);
+            $pageTokenProvider = $this->laravel->make(PageAccessTokenSource::class);
             if (trim($pageTokenProvider->token()) === '') {
                 $this->error('Token still missing. Complete OAuth using the URL above, then run: php artisan messenger-bot:install');
                 $this->printChecklist();
@@ -126,6 +132,29 @@ class InstallMessengerBotCommand extends Command
         $this->printChecklist();
 
         return self::SUCCESS;
+    }
+
+    protected function applyTenantEnvDefaults(MessengerBotEnvWriter $writer): void
+    {
+        $writer->put('MESSENGER_BOT_TENANCY_ENABLED', 'true');
+        if (! $writer->hasLine('MESSENGER_BOT_TENANCY_FALLBACK_LEGACY')) {
+            $writer->put('MESSENGER_BOT_TENANCY_FALLBACK_LEGACY', 'true');
+        }
+
+        $model = trim((string) $this->option('model'));
+        if ($model === '' && $this->input->isInteractive()) {
+            $model = trim((string) $this->ask(
+                'Eloquent model class for Facebook Page rows (must implement MessengerConnectable; leave empty to set later in .env)',
+                ''
+            ));
+        }
+
+        if ($model !== '') {
+            $writer->put('MESSENGER_BOT_TENANCY_CONNECTION_MODEL', $model);
+            $this->info('Set MESSENGER_BOT_TENANCY_CONNECTION_MODEL='.$model);
+        } else {
+            $this->warn('Tenancy enabled. Add MESSENGER_BOT_TENANCY_CONNECTION_MODEL=Your\\Model to .env (or pass --model= on install). Custom MESSENGER_BOT_TENANCY_RESOLVER still overrides the default lookup.');
+        }
     }
 
     /**
@@ -263,6 +292,23 @@ class InstallMessengerBotCommand extends Command
             'messenger-bot.get_started.default_reply' => $string('MESSENGER_BOT_GET_STARTED_REPLY', 'Welcome! Use the menu below.'),
             'messenger-bot.oauth.throttle_redirect' => $string('MESSENGER_BOT_OAUTH_THROTTLE_REDIRECT', '20,1'),
             'messenger-bot.oauth.throttle_callback' => $string('MESSENGER_BOT_OAUTH_THROTTLE_CALLBACK', '30,1'),
+            'messenger-bot.oauth.require_mt_signature' => $bool('MESSENGER_BOT_OAUTH_REQUIRE_MT_SIGNATURE', true),
+            'messenger-bot.oauth.dual_write_legacy_token' => $bool('MESSENGER_BOT_OAUTH_DUAL_WRITE_LEGACY', true),
+            'messenger-bot.tenancy.enabled' => $bool('MESSENGER_BOT_TENANCY_ENABLED', false),
+            'messenger-bot.tenancy.resolver' => $nullableTrimmed('MESSENGER_BOT_TENANCY_RESOLVER'),
+            'messenger-bot.tenancy.connection_model' => $nullableTrimmed('MESSENGER_BOT_TENANCY_CONNECTION_MODEL'),
+            'messenger-bot.tenancy.connection_page_id_column' => $string('MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN', 'facebook_page_id'),
+            'messenger-bot.tenancy.fallback_to_legacy_when_unresolved' => $bool('MESSENGER_BOT_TENANCY_FALLBACK_LEGACY', true),
+            'messenger-bot.tenancy.skip_entry_when_unresolved' => $bool('MESSENGER_BOT_TENANCY_SKIP_UNRESOLVED', false),
+            'messenger-bot.connection_tokens.cache_store' => $nullableTrimmed('MESSENGER_BOT_CONNECTION_TOKEN_CACHE_STORE'),
+            'messenger-bot.connection_tokens.token_key_prefix' => $string('MESSENGER_BOT_CONNECTION_TOKEN_PREFIX', 'messenger_bot:mt:conn:'),
+            'messenger-bot.connection_tokens.page_index_prefix' => $string('MESSENGER_BOT_CONNECTION_PAGE_INDEX_PREFIX', 'messenger_bot:mt:page:'),
+            'messenger-bot.connection_tokens.version_prefix' => $string('MESSENGER_BOT_POSTS_CACHE_VER_PREFIX', 'messenger_bot:mt:posts_ver:'),
+            'messenger-bot.posts.cache_store' => $nullableTrimmed('MESSENGER_BOT_POSTS_CACHE_STORE'),
+            'messenger-bot.posts.default_max_posts' => $int('MESSENGER_BOT_POSTS_DEFAULT_MAX_POSTS', 500),
+            'messenger-bot.posts.default_cache_ttl_seconds' => $int('MESSENGER_BOT_POSTS_CACHE_TTL', 300),
+            'messenger-bot.posts.default_limit_per_request' => $int('MESSENGER_BOT_POSTS_LIMIT_PER_REQUEST', 25),
+            'messenger-bot.posts.default_max_api_calls' => $int('MESSENGER_BOT_POSTS_MAX_API_CALLS', 50),
         ]);
     }
 
@@ -275,6 +321,9 @@ class InstallMessengerBotCommand extends Command
         $this->line('3. Dashboard: Webhooks → Page → Callback URL = {APP_URL}'.$path.' — Verify token = MESSENGER_BOT_VERIFY_TOKEN — Verify and Save.');
         $this->line('4. Dashboard: enable the same webhook fields as `webhook_fields` in config (or rely on `messenger-bot:install` / `messenger-bot:sync-page` for subscribed_apps).');
         $this->line('5. Re-run `php artisan messenger-bot:sync-page` after token or field list changes.');
+        if ((bool) config('messenger-bot.tenancy.enabled', false)) {
+            $this->line('6. Multi-tenant: ensure MESSENGER_BOT_TENANCY_CONNECTION_MODEL points to your Page row model (or set MESSENGER_BOT_TENANCY_RESOLVER). OAuth: MessengerOAuth::redirectToFacebook($model).');
+        }
         $this->newLine();
     }
 }

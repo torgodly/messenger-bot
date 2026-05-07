@@ -5,22 +5,42 @@ namespace MessengerBot;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use MessengerBot\Console\ClearMessengerPageTokenCommand;
+use MessengerBot\Console\InstallMessengerBotCommand;
+use MessengerBot\Console\MessengerBotTokenStatusCommand;
+use MessengerBot\Console\SyncMessengerPageCommand;
 use MessengerBot\Contracts\ConversationStore;
 use MessengerBot\Contracts\PageAccessTokenRepository;
+use MessengerBot\Contracts\PageAccessTokenSource;
 use MessengerBot\Conversation\ArrayConversationStore;
 use MessengerBot\Conversation\CacheConversationStore;
 use MessengerBot\Dispatching\HandlerDispatcher;
+use MessengerBot\Facebook\Posts\DefaultPagePostsService;
+use MessengerBot\Http\ContextualPageAccessTokenProvider;
 use MessengerBot\Http\Controllers\FacebookOAuthController;
 use MessengerBot\Http\Controllers\WebhookController;
 use MessengerBot\Http\GraphClient;
 use MessengerBot\Http\MessengerClient;
 use MessengerBot\Http\PageAccessTokenProvider;
+use MessengerBot\Kernel\Contracts\Clock;
+use MessengerBot\Kernel\Contracts\ConnectionTokenRepository;
+use MessengerBot\Kernel\Contracts\PostsCache;
+use MessengerBot\Kernel\Contracts\SyncsFacebookPagePosts;
+use MessengerBot\Kernel\Contracts\TenantResolver;
+use MessengerBot\Kernel\Tenancy\NullTenantResolver;
+use MessengerBot\Kernel\Tenancy\TenantContextHolder;
+use MessengerBot\Laravel\MessengerCurrentConnection;
+use MessengerBot\Laravel\MessengerOAuthService;
+use MessengerBot\Laravel\Posts\IlluminatePostsCache;
+use MessengerBot\Laravel\Support\SystemClock;
+use MessengerBot\Laravel\Tenancy\ConfigurableMessengerTenantResolver;
 use MessengerBot\OAuth\FacebookOAuthClient;
 use MessengerBot\Profile\PageAccessTokenHealthCheck;
 use MessengerBot\Profile\PageProfileCoordinator;
 use MessengerBot\Profile\PageWebhookSubscriber;
 use MessengerBot\Profile\PersistentMenuConfigurator;
 use MessengerBot\Routing\MessageRouter;
+use MessengerBot\Support\CacheConnectionTokenRepository;
 use MessengerBot\Support\CachedPageAccessTokenRepository;
 use MessengerBot\Webhook\EntryIterator;
 use MessengerBot\Webhook\FeedChangeParser;
@@ -47,14 +67,56 @@ class MessengerBotServiceProvider extends ServiceProvider
             );
         });
 
-        $this->app->singleton(PageAccessTokenProvider::class, function ($app) {
+        $this->app->singleton(TenantContextHolder::class, fn () => new TenantContextHolder);
+
+        $this->app->singleton(MessengerOAuthService::class);
+        $this->app->singleton(MessengerCurrentConnection::class);
+
+        $this->app->singleton(ConnectionTokenRepository::class, function () {
+            $store = config('messenger-bot.connection_tokens.cache_store');
+
+            return new CacheConnectionTokenRepository(
+                (string) config('messenger-bot.connection_tokens.token_key_prefix', 'messenger_bot:mt:conn:'),
+                (string) config('messenger-bot.connection_tokens.page_index_prefix', 'messenger_bot:mt:page:'),
+                (string) config('messenger-bot.connection_tokens.version_prefix', 'messenger_bot:mt:posts_ver:'),
+                is_string($store) && $store !== '' ? $store : null,
+            );
+        });
+
+        $this->app->singleton(TenantResolver::class, function ($app) {
+            if (! (bool) config('messenger-bot.tenancy.enabled', false)) {
+                return new NullTenantResolver;
+            }
+
+            $custom = config('messenger-bot.tenancy.resolver');
+            if (is_string($custom) && trim($custom) !== '' && class_exists(trim($custom))) {
+                return $app->make(trim($custom));
+            }
+
+            $model = config('messenger-bot.tenancy.connection_model');
+            if (is_string($model) && trim($model) !== '' && class_exists(trim($model))) {
+                return $app->make(ConfigurableMessengerTenantResolver::class);
+            }
+
+            return new NullTenantResolver;
+        });
+
+        $this->app->singleton(PageAccessTokenSource::class, function ($app) {
+            if ((bool) config('messenger-bot.tenancy.enabled', false)) {
+                return new ContextualPageAccessTokenProvider(
+                    $app->make(TenantContextHolder::class),
+                    $app->make(ConnectionTokenRepository::class),
+                    $app->make(PageAccessTokenRepository::class),
+                );
+            }
+
             return new PageAccessTokenProvider($app->make(PageAccessTokenRepository::class));
         });
 
         $this->app->singleton(GraphClient::class, function ($app) {
             return new GraphClient(
                 (string) config('messenger-bot.graph_version'),
-                $app->make(PageAccessTokenProvider::class),
+                $app->make(PageAccessTokenSource::class),
                 (string) config('messenger-bot.app_secret'),
             );
         });
@@ -99,8 +161,22 @@ class MessengerBotServiceProvider extends ServiceProvider
                 $app->make(FeedChangeParser::class),
                 $app->make(EntryIterator::class),
                 $app,
+                $app->make(TenantContextHolder::class),
+                $app->make(TenantResolver::class),
             );
         });
+
+        $this->app->singleton(Clock::class, SystemClock::class);
+
+        $this->app->singleton(PostsCache::class, function () {
+            $store = config('messenger-bot.posts.cache_store');
+
+            return new IlluminatePostsCache(
+                is_string($store) && $store !== '' ? $store : null,
+            );
+        });
+
+        $this->app->singleton(SyncsFacebookPagePosts::class, DefaultPagePostsService::class);
 
         $this->app->bind(ConversationStore::class, function ($app) {
             $driver = (string) config('messenger-bot.conversation.driver', 'cache');
@@ -133,10 +209,10 @@ class MessengerBotServiceProvider extends ServiceProvider
 
         if ($this->app->runningInConsole()) {
             $this->commands([
-                Console\ClearMessengerPageTokenCommand::class,
-                Console\InstallMessengerBotCommand::class,
-                Console\SyncMessengerPageCommand::class,
-                Console\MessengerBotTokenStatusCommand::class,
+                ClearMessengerPageTokenCommand::class,
+                InstallMessengerBotCommand::class,
+                SyncMessengerPageCommand::class,
+                MessengerBotTokenStatusCommand::class,
             ]);
         }
     }

@@ -12,6 +12,8 @@ use MessengerBot\Events\PostbackReceived;
 use MessengerBot\Events\WebhookReceived;
 use MessengerBot\Http\GraphClient;
 use MessengerBot\Http\MessengerClient;
+use MessengerBot\Kernel\Contracts\TenantResolver;
+use MessengerBot\Kernel\Tenancy\TenantContextHolder;
 use MessengerBot\Messages\Postback;
 use MessengerBot\MessengerBotManager;
 use MessengerBot\Routing\MessageRouter;
@@ -26,6 +28,8 @@ class WebhookProcessor
         protected FeedChangeParser $feedChangeParser,
         protected EntryIterator $entryIterator,
         protected Container $container,
+        protected TenantContextHolder $tenantContext,
+        protected TenantResolver $tenantResolver,
     ) {}
 
     /**
@@ -44,13 +48,53 @@ class WebhookProcessor
                 continue;
             }
 
-            foreach ($this->entryIterator->messagingEvents($entry) as $event) {
-                $this->processMessagingEvent($event);
-            }
+            $this->processEntry($entry);
+        }
+    }
 
-            foreach ($this->entryIterator->changes($entry) as $change) {
-                $this->processFeedChange($change);
-            }
+    /**
+     * @param  array<string, mixed>  $entry
+     */
+    protected function processEntry(array $entry): void
+    {
+        $pageId = isset($entry['id']) ? (string) $entry['id'] : '';
+        $tenancyEnabled = (bool) config('messenger-bot.tenancy.enabled', false);
+
+        if (! $tenancyEnabled || $pageId === '') {
+            $this->tenantContext->run(null, fn () => $this->dispatchEntry($entry));
+
+            return;
+        }
+
+        $resolution = $this->tenantResolver->resolveFromPageId($pageId);
+        if ($resolution !== null) {
+            $this->tenantContext->run($resolution, fn () => $this->dispatchEntry($entry));
+
+            return;
+        }
+
+        if ((bool) config('messenger-bot.tenancy.skip_entry_when_unresolved', false)) {
+            return;
+        }
+
+        if (! (bool) config('messenger-bot.tenancy.fallback_to_legacy_when_unresolved', true)) {
+            return;
+        }
+
+        $this->tenantContext->run(null, fn () => $this->dispatchEntry($entry));
+    }
+
+    /**
+     * @param  array<string, mixed>  $entry
+     */
+    protected function dispatchEntry(array $entry): void
+    {
+        foreach ($this->entryIterator->messagingEvents($entry) as $event) {
+            $this->processMessagingEvent($event);
+        }
+
+        foreach ($this->entryIterator->changes($entry) as $change) {
+            $this->processFeedChange($change);
         }
     }
 
@@ -103,9 +147,6 @@ class WebhookProcessor
         }
     }
 
-    /**
-     * @param  array<string, mixed>  $change
-     */
     protected function maybeReplyDefaultGetStarted(Postback $postback): void
     {
         $expected = trim((string) config('messenger-bot.get_started.payload', 'GET_STARTED'));
@@ -127,6 +168,9 @@ class WebhookProcessor
         $bot->reply(trim($reply));
     }
 
+    /**
+     * @param  array<string, mixed>  $change
+     */
     protected function processFeedChange(array $change): void
     {
         $comment = $this->feedChangeParser->parseComment($change);

@@ -38,6 +38,46 @@ return [
         'scopes' => array_values(array_filter(array_map('trim', explode(',', env('MESSENGER_BOT_OAUTH_SCOPES') ?: 'pages_messaging,pages_manage_metadata,pages_read_engagement,pages_manage_engagement,pages_show_list')))),
         'throttle_redirect' => env('MESSENGER_BOT_OAUTH_THROTTLE_REDIRECT', '20,1'),
         'throttle_callback' => env('MESSENGER_BOT_OAUTH_THROTTLE_CALLBACK', '30,1'),
+        /*
+        | Multi-tenant OAuth: redirect may include tenant_id, connection_id, mt_sig (HMAC of tenant|connection).
+        | When require_mt_signature is true, mt_sig must match hash_hmac('sha256', tenant_id."\n".connection_id, app_secret).
+        */
+        'require_mt_signature' => (bool) env('MESSENGER_BOT_OAUTH_REQUIRE_MT_SIGNATURE', true),
+        'dual_write_legacy_token' => (bool) env('MESSENGER_BOT_OAUTH_DUAL_WRITE_LEGACY', true),
+    ],
+
+    /*
+    | Multi-tenant: resolve webhook entry Page ID to tenant + connection; contextual Page token for Graph.
+    */
+    'tenancy' => [
+        'enabled' => (bool) env('MESSENGER_BOT_TENANCY_ENABLED', false),
+        /*
+        | Optional custom TenantResolver FQCN. If empty, a default resolver uses connection_model below.
+        */
+        'resolver' => env('MESSENGER_BOT_TENANCY_RESOLVER'),
+        /*
+        | Eloquent model class (must implement MessengerConnectable, e.g. use InteractsWithMessengerConnection).
+        | Used automatically when tenancy.enabled and tenancy.resolver are not set. php artisan messenger-bot:install --tenant --model=...
+        */
+        'connection_model' => env('MESSENGER_BOT_TENANCY_CONNECTION_MODEL'),
+        'connection_page_id_column' => env('MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN', 'facebook_page_id'),
+        'fallback_to_legacy_when_unresolved' => (bool) env('MESSENGER_BOT_TENANCY_FALLBACK_LEGACY', true),
+        'skip_entry_when_unresolved' => (bool) env('MESSENGER_BOT_TENANCY_SKIP_UNRESOLVED', false),
+    ],
+
+    'connection_tokens' => [
+        'cache_store' => env('MESSENGER_BOT_CONNECTION_TOKEN_CACHE_STORE'),
+        'token_key_prefix' => env('MESSENGER_BOT_CONNECTION_TOKEN_PREFIX', 'messenger_bot:mt:conn:'),
+        'page_index_prefix' => env('MESSENGER_BOT_CONNECTION_PAGE_INDEX_PREFIX', 'messenger_bot:mt:page:'),
+        'version_prefix' => env('MESSENGER_BOT_POSTS_CACHE_VER_PREFIX', 'messenger_bot:mt:posts_ver:'),
+    ],
+
+    'posts' => [
+        'cache_store' => env('MESSENGER_BOT_POSTS_CACHE_STORE'),
+        'default_max_posts' => (int) env('MESSENGER_BOT_POSTS_DEFAULT_MAX_POSTS', 500),
+        'default_cache_ttl_seconds' => (int) env('MESSENGER_BOT_POSTS_CACHE_TTL', 300),
+        'default_limit_per_request' => (int) env('MESSENGER_BOT_POSTS_LIMIT_PER_REQUEST', 25),
+        'default_max_api_calls' => (int) env('MESSENGER_BOT_POSTS_MAX_API_CALLS', 50),
     ],
 
     'graph_version' => env('MESSENGER_BOT_GRAPH_VERSION', 'v24.0'),

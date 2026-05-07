@@ -3,11 +3,12 @@
 namespace MessengerBot\Http;
 
 use MessengerBot\Contracts\PageAccessTokenRepository;
+use MessengerBot\Contracts\PageAccessTokenSource;
 
 /**
  * Resolves the Page access token: cached OAuth token first, then optional config (.env) fallback.
  */
-class PageAccessTokenProvider
+class PageAccessTokenProvider implements PageAccessTokenSource
 {
     public function __construct(
         protected PageAccessTokenRepository $repository,

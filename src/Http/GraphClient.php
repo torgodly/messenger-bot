@@ -3,12 +3,13 @@
 namespace MessengerBot\Http;
 
 use Illuminate\Support\Facades\Http;
+use MessengerBot\Contracts\PageAccessTokenSource;
 
 class GraphClient
 {
     public function __construct(
         protected string $graphVersion,
-        protected PageAccessTokenProvider $pageAccessToken,
+        protected PageAccessTokenSource $pageAccessToken,
         protected string $appSecret,
     ) {}
 
@@ -88,6 +89,54 @@ class GraphClient
             default => throw new \InvalidArgumentException("Unsupported method {$method}"),
         };
 
+        $data = $response->json() ?? [];
+        if (! $response->successful() || isset($data['error'])) {
+            $msg = is_array($data['error'] ?? null)
+                ? (string) ($data['error']['message'] ?? 'Graph error')
+                : 'Graph error';
+
+            throw new GraphException($msg, $response->status(), is_array($data) ? $data : []);
+        }
+
+        return is_array($data) ? $data : [];
+    }
+
+    /**
+     * GET a fully qualified Graph URL (e.g. paging.next). Does not prepend graph version base.
+     * Ensures appsecret_proof is present when app secret is configured.
+     *
+     * @return array<string, mixed>
+     */
+    public function getFromFullUrl(string $url): array
+    {
+        $parts = parse_url($url);
+        if (! is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            throw new \InvalidArgumentException('Invalid Graph URL.');
+        }
+
+        $query = [];
+        if (! empty($parts['query'])) {
+            parse_str((string) $parts['query'], $query);
+        }
+
+        if ($this->appSecret !== '' && ! isset($query['appsecret_proof'])) {
+            $token = $query['access_token'] ?? $this->pageAccessToken->token();
+            if (is_string($token) && $token !== '') {
+                $query['appsecret_proof'] = hash_hmac('sha256', $token, $this->appSecret);
+            }
+        }
+
+        $rebuilt = ($parts['scheme'] ?? 'https').'://'.($parts['host'] ?? '');
+        if (! empty($parts['port'])) {
+            $rebuilt .= ':'.$parts['port'];
+        }
+        $rebuilt .= ($parts['path'] ?? '');
+        if ($query !== []) {
+            $rebuilt .= '?'.http_build_query($query);
+        }
+
+        $pending = Http::acceptJson();
+        $response = $pending->get($rebuilt);
         $data = $response->json() ?? [];
         if (! $response->successful() || isset($data['error'])) {
             $msg = is_array($data['error'] ?? null)

@@ -10,7 +10,9 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use MessengerBot\Contracts\PageAccessTokenRepository;
 use MessengerBot\Http\GraphException;
+use MessengerBot\Kernel\Contracts\ConnectionTokenRepository;
 use MessengerBot\OAuth\FacebookOAuthClient;
+use MessengerBot\OAuth\OAuthStateSigner;
 use MessengerBot\Support\GraphContainerReset;
 
 class FacebookOAuthController extends Controller
@@ -18,6 +20,7 @@ class FacebookOAuthController extends Controller
     public function __construct(
         protected FacebookOAuthClient $oauth,
         protected PageAccessTokenRepository $pageTokens,
+        protected ConnectionTokenRepository $connectionTokens,
     ) {}
 
     public function redirectToFacebook(Request $request): RedirectResponse
@@ -30,9 +33,37 @@ class FacebookOAuthController extends Controller
         $redirectUri = $this->callbackUrl();
         $state = Str::random(40);
 
+        $tenantId = trim((string) $request->query('tenant_id', ''));
+        $connectionId = trim((string) $request->query('connection_id', ''));
+        $mtSig = trim((string) $request->query('mt_sig', ''));
+
+        $mt = null;
+        if ($tenantId !== '' || $connectionId !== '') {
+            if ($tenantId === '' || $connectionId === '') {
+                abort(400, 'Multi-tenant OAuth requires both tenant_id and connection_id query parameters.');
+            }
+
+            $secret = trim((string) config('messenger-bot.app_secret', ''));
+            $requireSig = (bool) config('messenger-bot.oauth.require_mt_signature', true);
+            if ($requireSig) {
+                if ($secret === '') {
+                    abort(500, 'MESSENGER_BOT_APP_SECRET is required to verify mt_sig for multi-tenant OAuth.');
+                }
+                if (! OAuthStateSigner::verify($tenantId, $connectionId, $secret, $mtSig)) {
+                    abort(403, 'Invalid or missing mt_sig for multi-tenant OAuth.');
+                }
+            }
+
+            $mt = [
+                'tenant_id' => $tenantId,
+                'connection_id' => $connectionId,
+            ];
+        }
+
         Cache::put($this->stateCacheKey($state), [
             'redirect_uri' => $redirectUri,
             'issued_at' => time(),
+            'mt' => $mt,
         ], now()->addMinutes(10));
 
         $scopes = (array) config('messenger-bot.oauth.scopes', []);
@@ -117,11 +148,33 @@ class FacebookOAuthController extends Controller
             $debug = $this->oauth->debugInputToken($pageToken);
             $expiresAt = $debug['expires_at'];
 
-            $this->pageTokens->put([
-                'access_token' => $pageToken,
-                'expires_at' => $expiresAt,
-                'page_id' => $chosen['id'],
-            ]);
+            $mt = isset($payload['mt']) && is_array($payload['mt']) ? $payload['mt'] : null;
+            $dualWriteLegacy = (bool) config('messenger-bot.oauth.dual_write_legacy_token', true);
+
+            $wroteConnection = false;
+            if (is_array($mt)
+                && isset($mt['tenant_id'], $mt['connection_id'])
+                && is_string($mt['tenant_id'])
+                && is_string($mt['connection_id'])
+                && $mt['tenant_id'] !== ''
+                && $mt['connection_id'] !== '') {
+                $this->connectionTokens->put([
+                    'access_token' => $pageToken,
+                    'expires_at' => $expiresAt,
+                    'page_id' => (string) $chosen['id'],
+                    'tenant_id' => $mt['tenant_id'],
+                    'connection_id' => $mt['connection_id'],
+                ]);
+                $wroteConnection = true;
+            }
+
+            if (! $wroteConnection || $dualWriteLegacy) {
+                $this->pageTokens->put([
+                    'access_token' => $pageToken,
+                    'expires_at' => $expiresAt,
+                    'page_id' => $chosen['id'],
+                ]);
+            }
 
             GraphContainerReset::forget(app());
         } catch (GraphException $e) {
