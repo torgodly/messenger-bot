@@ -39,6 +39,8 @@ use MessengerBot\Laravel\MessengerOAuthService;
 use MessengerBot\Laravel\Posts\IlluminatePostsCache;
 use MessengerBot\Laravel\Support\SystemClock;
 use MessengerBot\Laravel\Tenancy\ConfigurableMessengerTenantResolver;
+use MessengerBot\OAuth\CompleteOAuthPageLink;
+use MessengerBot\OAuth\ExchangeOAuthCodeForManagedPages;
 use MessengerBot\OAuth\FacebookOAuthClient;
 use MessengerBot\Profile\PageAccessTokenHealthCheck;
 use MessengerBot\Profile\PageProfileCoordinator;
@@ -136,6 +138,9 @@ class MessengerBotServiceProvider extends ServiceProvider
                 (string) config('messenger-bot.app_secret', ''),
             );
         });
+
+        $this->app->singleton(ExchangeOAuthCodeForManagedPages::class);
+        $this->app->singleton(CompleteOAuthPageLink::class);
 
         $this->app->singleton(MessengerClient::class, function ($app) {
             return new MessengerClient($app->make(GraphClient::class));
@@ -268,17 +273,19 @@ class MessengerBotServiceProvider extends ServiceProvider
 
     protected function validateTenancyConfiguration(): void
     {
-        $error = TenancyConfigurationValidator::connectionModelError();
-        if ($error === null) {
+        $errors = TenancyConfigurationValidator::errors();
+        if ($errors === []) {
             return;
         }
 
+        $message = implode(' ', $errors);
+
         if ($this->app->environment(['local', 'testing'])) {
-            throw new InvalidConfigurationException($error);
+            throw new InvalidConfigurationException($message);
         }
 
-        Log::critical('messenger-bot: invalid tenancy configuration — tenant resolver disabled until fixed.', [
-            'error' => $error,
+        Log::critical('messenger-bot: invalid tenancy configuration — features disabled until fixed.', [
+            'errors' => $errors,
         ]);
     }
 }

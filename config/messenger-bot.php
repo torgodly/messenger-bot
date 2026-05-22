@@ -44,6 +44,18 @@ return [
         */
         'require_mt_signature' => (bool) env('MESSENGER_BOT_OAUTH_REQUIRE_MT_SIGNATURE', true),
         'dual_write_legacy_token' => (bool) env('MESSENGER_BOT_OAUTH_DUAL_WRITE_LEGACY', true),
+        /*
+        | When the user manages multiple Pages, OAuth caches the list and redirects here with ?token= (opaque).
+        | Required when tenancy.enabled (host app shows Page picker; not provided by this package).
+        */
+        'pending_pages_redirect_url' => env('MESSENGER_BOT_OAUTH_PENDING_PAGES_URL'),
+        'pending_pages_cache_prefix' => env('MESSENGER_BOT_OAUTH_PENDING_PAGES_CACHE_PREFIX', 'messenger_bot:oauth_pages:'),
+        'pending_pages_ttl_minutes' => (int) env('MESSENGER_BOT_OAUTH_PENDING_PAGES_TTL', 10),
+        'pending_pages_cache_store' => env('MESSENGER_BOT_OAUTH_PENDING_PAGES_CACHE_STORE'),
+        /*
+        | Host FQCN implementing ValidatesMessengerPageLink (required when tenancy.enabled).
+        */
+        'validates_page_link' => env('MESSENGER_BOT_VALIDATES_PAGE_LINK'),
     ],
 
     /*

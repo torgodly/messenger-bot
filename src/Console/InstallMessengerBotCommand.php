@@ -169,6 +169,8 @@ class InstallMessengerBotCommand extends Command
         if (! $writer->hasLine('MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN')) {
             $this->comment('Default Page ID column is facebook_page_id. Set MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN=page_id if your table uses page_id.');
         }
+
+        $this->comment('Multi-tenant: set MESSENGER_BOT_OAUTH_PENDING_PAGES_URL (Page picker in your app) and MESSENGER_BOT_VALIDATES_PAGE_LINK (ValidatesMessengerPageLink implementation).');
     }
 
     /**
@@ -332,6 +334,11 @@ class InstallMessengerBotCommand extends Command
             'messenger-bot.after_connection_token_stored.queue_retry_on_failure' => $bool('MESSENGER_BOT_LINK_QUEUE_RETRY', true),
             'messenger-bot.comment_handlers.queue' => $bool('MESSENGER_BOT_COMMENT_HANDLERS_QUEUE', false),
             'messenger-bot.comment_handlers.queue_name' => $string('MESSENGER_BOT_COMMENT_HANDLERS_QUEUE_NAME', 'webhooks'),
+            'messenger-bot.oauth.pending_pages_redirect_url' => $nullableTrimmed('MESSENGER_BOT_OAUTH_PENDING_PAGES_URL'),
+            'messenger-bot.oauth.pending_pages_cache_prefix' => $string('MESSENGER_BOT_OAUTH_PENDING_PAGES_CACHE_PREFIX', 'messenger_bot:oauth_pages:'),
+            'messenger-bot.oauth.pending_pages_ttl_minutes' => $int('MESSENGER_BOT_OAUTH_PENDING_PAGES_TTL', 10),
+            'messenger-bot.oauth.pending_pages_cache_store' => $nullableTrimmed('MESSENGER_BOT_OAUTH_PENDING_PAGES_CACHE_STORE'),
+            'messenger-bot.oauth.validates_page_link' => $nullableTrimmed('MESSENGER_BOT_VALIDATES_PAGE_LINK'),
         ]);
     }
 

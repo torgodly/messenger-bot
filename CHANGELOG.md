@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-05-07
+
+### Added
+
+- `ExchangeOAuthCodeForManagedPages`, `CompleteOAuthPageLink`, `PendingOAuthPages` for multi-Page OAuth without auto-picking the first Page.
+- `ValidatesMessengerPageLink` contract (`MESSENGER_BOT_VALIDATES_PAGE_LINK`) — host enforces one Page per tenant and one tenant per Page.
+- `PageLinkRejectedException` and session flash key `messenger_bot_oauth_error` on rejected links.
+- Config: `MESSENGER_BOT_OAUTH_PENDING_PAGES_URL`, pending Pages cache prefix/TTL, preferred Page fast-path unchanged.
+
+### Changed
+
+- **Breaking:** OAuth callback with 2+ managed Pages caches all Pages and redirects to `pending_pages_redirect_url?token=` — no token stored until `CompleteOAuthPageLink::complete()`.
+- Multi-tenant boot validation also requires `validates_page_link` and `pending_pages_redirect_url`.
+
+Composer: **`^2.2`**. Git tag: **`v2.2.0`**.
+
 ## [2.1.0] - 2026-05-07
 
 ### Added

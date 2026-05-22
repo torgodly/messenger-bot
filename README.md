@@ -2,7 +2,7 @@
 
 Facebook Messenger webhooks for Laravel (messages, postbacks, quick replies, feed comments). BotMan-style API (`hears`, `payload`, `onComment`) without BotMan.
 
-**PHP 8.3+ · Laravel 12 or 13 · Composer `^2.1`**
+**PHP 8.3+ · Laravel 12 or 13 · Composer `^2.2`**
 
 ---
 
@@ -11,7 +11,7 @@ Facebook Messenger webhooks for Laravel (messages, postbacks, quick replies, fee
 ### Single Facebook Page (default)
 
 ```bash
-composer require torgodly/messenger-bot:^2.1
+composer require torgodly/messenger-bot:^2.2
 php artisan vendor:publish --tag=messenger-bot-config
 php artisan messenger-bot:install
 ```
@@ -32,9 +32,16 @@ MESSENGER_BOT_TENANCY_CONNECTION_MODEL=App\Models\YourFacebookPage
 MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN=page_id
 MESSENGER_BOT_AUTO_SUBSCRIBE_AFTER_OAUTH=true
 MESSENGER_BOT_AUTO_SYNC_MENU_AFTER_OAUTH=true
+MESSENGER_BOT_OAUTH_PENDING_PAGES_URL=https://YOUR-DOMAIN/meta/pick-page
+MESSENGER_BOT_VALIDATES_PAGE_LINK=App\\Messenger\\YourPageLinkValidator
 ```
 
 Your model must extend Eloquent `Model` and implement `MessengerBot\Contracts\MessengerConnectable` (trait `InteractsWithMessengerConnection` is recommended). Wrong model class **fails fast in `local` / `testing`**.
+
+**Business rules (enforced by your app via `ValidatesMessengerPageLink`):**
+
+- One Graph Page ID → at most one tenant at a time.
+- One tenant → at most one linked Page at a time (reconnecting the **same** `page_id` is allowed).
 
 ---
 
@@ -83,13 +90,62 @@ Optional host config `comment_handlers.queue` — infrastructure only; the packa
 | `tenancy.connection_page_id_column` / `MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN` | Column matched to Meta Page ID (default `facebook_page_id`; many apps use `page_id`) |
 | Model `messengerFacebookPageIdColumn()` | Override column name on the model |
 
-**OAuth:**
+**OAuth redirect:**
 
 ```php
 use MessengerBot\Facades\MessengerOAuth;
 
 return MessengerOAuth::redirectToFacebook($pageModel);
 ```
+
+### Multi-Page OAuth flow (no package UI)
+
+Facebook may return **0, 1, or many** managed Pages.
+
+| Count | Behaviour |
+|-------|-----------|
+| 0 | Error 400 |
+| 1 | `CompleteOAuthPageLink` stores token → redirect success |
+| 2+ | **Not an error.** No token stored. All Pages cached → redirect `MESSENGER_BOT_OAUTH_PENDING_PAGES_URL?token=<opaque>` |
+
+Your app shows a Page picker (Filament, Livewire, etc.). After the user chooses:
+
+```php
+use MessengerBot\OAuth\CompleteOAuthPageLink;
+use MessengerBot\OAuth\PendingOAuthPages;
+
+$payload = PendingOAuthPages::pull($request->query('token'));
+// $payload['pages'], $payload['mt']
+
+app(CompleteOAuthPageLink::class)->complete($chosenPage, $payload['mt']);
+```
+
+**`ValidatesMessengerPageLink`** — implement in your app:
+
+```php
+use MessengerBot\Contracts\ValidatesMessengerPageLink;
+
+final class YourPageLinkValidator implements ValidatesMessengerPageLink
+{
+    public function assertMayLinkPage(array $page, array $mt): void
+    {
+        // Block if page_id belongs to another tenant
+        // Block if tenant already has a different page_id
+        // Allow reconnect when page_id unchanged
+    }
+}
+```
+
+On rejection, OAuth redirect uses session flash key **`messenger_bot_oauth_error`**.
+
+Optional: `MESSENGER_BOT_OAUTH_PREFERRED_PAGE_ID` — when exactly one Page in the list matches, link immediately (skip pending redirect).
+
+| Env | Purpose |
+|-----|---------|
+| `MESSENGER_BOT_OAUTH_PENDING_PAGES_URL` | Required when tenancy enabled |
+| `MESSENGER_BOT_OAUTH_PENDING_PAGES_TTL` | Cache minutes (default `10`) |
+| `MESSENGER_BOT_OAUTH_PENDING_PAGES_CACHE_PREFIX` | Default `messenger_bot:oauth_pages:` |
+| `MESSENGER_BOT_VALIDATES_PAGE_LINK` | FQCN for validator (required when tenancy enabled) |
 
 **Webhook context:**
 
@@ -171,6 +227,14 @@ Use Matager as a reference; copy patterns, not the package.
 | Invalid tenancy model | Exception in `local`/`testing`; production logs critical and disables configurable resolver |
 
 ---
+
+## Upgrade `2.1` → `2.2`
+
+1. `composer require torgodly/messenger-bot:^2.2`
+2. Set `MESSENGER_BOT_OAUTH_PENDING_PAGES_URL` and `MESSENGER_BOT_VALIDATES_PAGE_LINK` when tenancy is on
+3. Implement `ValidatesMessengerPageLink` for Page/tenant uniqueness
+4. Build a Page picker route that reads `?token=`, calls `PendingOAuthPages::pull()`, then `CompleteOAuthPageLink::complete()`
+5. **Breaking:** multiple Pages from OAuth are **no longer** auto-linked to the first Page
 
 ## Upgrade `2.0` → `2.1`
 

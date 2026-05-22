@@ -5,22 +5,22 @@ namespace MessengerBot\Http\Controllers;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use MessengerBot\Contracts\PageAccessTokenRepository;
+use MessengerBot\Exceptions\PageLinkRejectedException;
 use MessengerBot\Http\GraphException;
-use MessengerBot\Kernel\Contracts\ConnectionTokenRepository;
-use MessengerBot\OAuth\FacebookOAuthClient;
+use MessengerBot\OAuth\CompleteOAuthPageLink;
+use MessengerBot\OAuth\ExchangeOAuthCodeForManagedPages;
 use MessengerBot\OAuth\OAuthStateSigner;
-use MessengerBot\Support\GraphContainerReset;
+use MessengerBot\OAuth\PendingOAuthPages;
 
 class FacebookOAuthController extends Controller
 {
     public function __construct(
-        protected FacebookOAuthClient $oauth,
-        protected PageAccessTokenRepository $pageTokens,
-        protected ConnectionTokenRepository $connectionTokens,
+        protected ExchangeOAuthCodeForManagedPages $exchangePages,
+        protected CompleteOAuthPageLink $completePageLink,
     ) {}
 
     public function redirectToFacebook(Request $request): RedirectResponse
@@ -103,80 +103,34 @@ class FacebookOAuthController extends Controller
         }
 
         $redirectUri = (string) $payload['redirect_uri'];
+        $mt = isset($payload['mt']) && is_array($payload['mt']) ? $payload['mt'] : null;
 
         try {
-            $short = $this->oauth->exchangeCodeForUserAccessToken($code, $redirectUri);
-            $shortUser = (string) ($short['access_token'] ?? '');
-            if ($shortUser === '') {
-                abort(500, 'Facebook did not return a user access token.');
-            }
+            $result = $this->exchangePages->exchange($code, $redirectUri, $mt);
+            $pages = $result['pages'];
+            $mt = $result['mt'];
 
-            $long = $this->oauth->exchangeLongLivedUserToken($shortUser);
-            $longUser = (string) ($long['access_token'] ?? '');
-            if ($longUser === '') {
-                abort(500, 'Could not exchange for a long-lived user token.');
-            }
-
-            $pages = $this->oauth->fetchManagedPages($longUser);
             if ($pages === []) {
                 abort(400, 'No Facebook Pages returned for this account. Grant Page permissions and ensure you manage at least one Page.');
             }
 
             $preferred = trim((string) config('messenger-bot.oauth.preferred_page_id', ''));
-            $chosen = null;
             if ($preferred !== '') {
-                foreach ($pages as $p) {
-                    if ($p['id'] === $preferred) {
-                        $chosen = $p;
-                        break;
-                    }
-                }
-                if ($chosen === null) {
-                    abort(400, 'Preferred Page ID '.$preferred.' was not in the list of managed Pages. Check MESSENGER_BOT_OAUTH_PREFERRED_PAGE_ID.');
-                }
-            } else {
-                $chosen = $pages[0];
-                if (count($pages) > 1) {
-                    Log::warning('Messenger OAuth: multiple Pages available; using the first. Set MESSENGER_BOT_OAUTH_PREFERRED_PAGE_ID.', [
-                        'page_ids' => array_column($pages, 'id'),
-                        'chosen' => $chosen['id'],
-                    ]);
+                $matching = array_values(array_filter($pages, fn (array $p): bool => ($p['id'] ?? '') === $preferred));
+                if (count($matching) === 1) {
+                    return $this->completeAndRedirectSuccess($matching[0], $mt);
                 }
             }
 
-            $pageToken = $chosen['access_token'];
-            $debug = $this->oauth->debugInputToken($pageToken);
-            $expiresAt = $debug['expires_at'];
-
-            $mt = isset($payload['mt']) && is_array($payload['mt']) ? $payload['mt'] : null;
-            $dualWriteLegacy = (bool) config('messenger-bot.oauth.dual_write_legacy_token', true);
-
-            $wroteConnection = false;
-            if (is_array($mt)
-                && isset($mt['tenant_id'], $mt['connection_id'])
-                && is_string($mt['tenant_id'])
-                && is_string($mt['connection_id'])
-                && $mt['tenant_id'] !== ''
-                && $mt['connection_id'] !== '') {
-                $this->connectionTokens->put([
-                    'access_token' => $pageToken,
-                    'expires_at' => $expiresAt,
-                    'page_id' => (string) $chosen['id'],
-                    'tenant_id' => $mt['tenant_id'],
-                    'connection_id' => $mt['connection_id'],
-                ]);
-                $wroteConnection = true;
+            if (count($pages) === 1) {
+                return $this->completeAndRedirectSuccess($pages[0], $mt);
             }
 
-            if (! $wroteConnection || $dualWriteLegacy) {
-                $this->pageTokens->put([
-                    'access_token' => $pageToken,
-                    'expires_at' => $expiresAt,
-                    'page_id' => $chosen['id'],
-                ]);
-            }
-
-            GraphContainerReset::forget(app());
+            return $this->redirectToPendingPagesPicker($pages, $mt);
+        } catch (PageLinkRejectedException $e) {
+            return $this->redirectWithOAuthError($e->getMessage());
+        } catch (HttpException $e) {
+            throw $e;
         } catch (GraphException $e) {
             Log::error('Messenger OAuth callback failed.', [
                 'exception' => $e,
@@ -189,6 +143,40 @@ class FacebookOAuthController extends Controller
             ]);
             abort(500, 'OAuth failed. Check application logs.');
         }
+    }
+
+    /**
+     * @param  array{id: string, name: string, access_token: string}  $page
+     * @param  array{tenant_id: string, connection_id: string}|null  $mt
+     */
+    protected function completeAndRedirectSuccess(array $page, ?array $mt): RedirectResponse
+    {
+        $this->completePageLink->complete($page, $mt);
+
+        return redirect()->to($this->successPath());
+    }
+
+    /**
+     * @param  list<array{id: string, name: string, access_token: string}>  $pages
+     * @param  array{tenant_id: string, connection_id: string}|null  $mt
+     */
+    protected function redirectToPendingPagesPicker(array $pages, ?array $mt): RedirectResponse
+    {
+        $baseUrl = trim((string) config('messenger-bot.oauth.pending_pages_redirect_url', ''));
+        if ($baseUrl === '') {
+            abort(500, 'Set MESSENGER_BOT_OAUTH_PENDING_PAGES_URL for multi-Page OAuth (host Page picker).');
+        }
+
+        $token = PendingOAuthPages::store($pages, $mt);
+
+        $separator = str_contains($baseUrl, '?') ? '&' : '?';
+
+        return redirect()->away($baseUrl.$separator.http_build_query(['token' => $token]));
+    }
+
+    protected function redirectWithOAuthError(string $message): RedirectResponse
+    {
+        session()->flash('messenger_bot_oauth_error', $message);
 
         return redirect()->to($this->successPath());
     }
