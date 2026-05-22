@@ -58,11 +58,34 @@ return [
         /*
         | Eloquent model class (must implement MessengerConnectable, e.g. use InteractsWithMessengerConnection).
         | Used automatically when tenancy.enabled and tenancy.resolver are not set. php artisan messenger-bot:install --tenant --model=...
+        | Page ID column: config key connection_page_id_column (env MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN). Default facebook_page_id;
+        | override on the model via messengerFacebookPageIdColumn() (e.g. page_id in Matager).
         */
         'connection_model' => env('MESSENGER_BOT_TENANCY_CONNECTION_MODEL'),
         'connection_page_id_column' => env('MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN', 'facebook_page_id'),
         'fallback_to_legacy_when_unresolved' => (bool) env('MESSENGER_BOT_TENANCY_FALLBACK_LEGACY', true),
         'skip_entry_when_unresolved' => (bool) env('MESSENGER_BOT_TENANCY_SKIP_UNRESOLVED', false),
+    ],
+
+    /*
+    | After multi-tenant OAuth stores a connection token, optionally subscribe webhook fields and sync persistent menu.
+    */
+    'after_connection_token_stored' => [
+        'subscribe_webhooks' => (bool) env('MESSENGER_BOT_AUTO_SUBSCRIBE_AFTER_OAUTH', false),
+        'sync_persistent_menu' => (bool) env('MESSENGER_BOT_AUTO_SYNC_MENU_AFTER_OAUTH', false),
+        'skip_token_check' => (bool) env('MESSENGER_BOT_LINK_SKIP_TOKEN_CHECK', false),
+        'queue' => (bool) env('MESSENGER_BOT_AFTER_OAUTH_QUEUE', false),
+        'queue_name' => env('MESSENGER_BOT_AFTER_OAUTH_QUEUE_NAME'),
+        'queue_connection' => env('MESSENGER_BOT_AFTER_OAUTH_QUEUE_CONNECTION'),
+        'queue_retry_on_failure' => (bool) env('MESSENGER_BOT_LINK_QUEUE_RETRY', true),
+    ],
+
+    /*
+    | Optional infrastructure for host apps that queue comment handling (package does not ship DB rules).
+    */
+    'comment_handlers' => [
+        'queue' => (bool) env('MESSENGER_BOT_COMMENT_HANDLERS_QUEUE', false),
+        'queue_name' => env('MESSENGER_BOT_COMMENT_HANDLERS_QUEUE_NAME', 'webhooks'),
     ],
 
     'connection_tokens' => [

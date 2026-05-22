@@ -9,6 +9,7 @@ use MessengerBot\Contracts\PageAccessTokenSource;
 use MessengerBot\Profile\PageProfileCoordinator;
 use MessengerBot\Support\GraphContainerReset;
 use MessengerBot\Support\MessengerBotEnvWriter;
+use MessengerBot\Support\MessengerConnectableValidator;
 
 class InstallMessengerBotCommand extends Command
 {
@@ -136,11 +137,6 @@ class InstallMessengerBotCommand extends Command
 
     protected function applyTenantEnvDefaults(MessengerBotEnvWriter $writer): void
     {
-        $writer->put('MESSENGER_BOT_TENANCY_ENABLED', 'true');
-        if (! $writer->hasLine('MESSENGER_BOT_TENANCY_FALLBACK_LEGACY')) {
-            $writer->put('MESSENGER_BOT_TENANCY_FALLBACK_LEGACY', 'true');
-        }
-
         $model = trim((string) $this->option('model'));
         if ($model === '' && $this->input->isInteractive()) {
             $model = trim((string) $this->ask(
@@ -150,10 +146,28 @@ class InstallMessengerBotCommand extends Command
         }
 
         if ($model !== '') {
+            $error = MessengerConnectableValidator::validateClass($model);
+            if ($error !== null) {
+                $this->error($error);
+
+                throw new \RuntimeException('Invalid --model for multi-tenant install.');
+            }
+        }
+
+        $writer->put('MESSENGER_BOT_TENANCY_ENABLED', 'true');
+        if (! $writer->hasLine('MESSENGER_BOT_TENANCY_FALLBACK_LEGACY')) {
+            $writer->put('MESSENGER_BOT_TENANCY_FALLBACK_LEGACY', 'true');
+        }
+
+        if ($model !== '') {
             $writer->put('MESSENGER_BOT_TENANCY_CONNECTION_MODEL', $model);
-            $this->info('Set MESSENGER_BOT_TENANCY_CONNECTION_MODEL='.$model);
+            $this->info('Set MESSENGER_BOT_TENANCY_CONNECTION_MODEL='.$model.' (no quotes in .env)');
         } else {
-            $this->warn('Tenancy enabled. Add MESSENGER_BOT_TENANCY_CONNECTION_MODEL=Your\\Model to .env (or pass --model= on install). Custom MESSENGER_BOT_TENANCY_RESOLVER still overrides the default lookup.');
+            $this->warn('Tenancy enabled. Add MESSENGER_BOT_TENANCY_CONNECTION_MODEL=App\\Models\\YourModel to .env (or pass --model= on install). Custom MESSENGER_BOT_TENANCY_RESOLVER still overrides the default lookup.');
+        }
+
+        if (! $writer->hasLine('MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN')) {
+            $this->comment('Default Page ID column is facebook_page_id. Set MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN=page_id if your table uses page_id.');
         }
     }
 
@@ -309,6 +323,15 @@ class InstallMessengerBotCommand extends Command
             'messenger-bot.posts.default_cache_ttl_seconds' => $int('MESSENGER_BOT_POSTS_CACHE_TTL', 300),
             'messenger-bot.posts.default_limit_per_request' => $int('MESSENGER_BOT_POSTS_LIMIT_PER_REQUEST', 25),
             'messenger-bot.posts.default_max_api_calls' => $int('MESSENGER_BOT_POSTS_MAX_API_CALLS', 50),
+            'messenger-bot.after_connection_token_stored.subscribe_webhooks' => $bool('MESSENGER_BOT_AUTO_SUBSCRIBE_AFTER_OAUTH', false),
+            'messenger-bot.after_connection_token_stored.sync_persistent_menu' => $bool('MESSENGER_BOT_AUTO_SYNC_MENU_AFTER_OAUTH', false),
+            'messenger-bot.after_connection_token_stored.skip_token_check' => $bool('MESSENGER_BOT_LINK_SKIP_TOKEN_CHECK', false),
+            'messenger-bot.after_connection_token_stored.queue' => $bool('MESSENGER_BOT_AFTER_OAUTH_QUEUE', false),
+            'messenger-bot.after_connection_token_stored.queue_name' => $nullableTrimmed('MESSENGER_BOT_AFTER_OAUTH_QUEUE_NAME'),
+            'messenger-bot.after_connection_token_stored.queue_connection' => $nullableTrimmed('MESSENGER_BOT_AFTER_OAUTH_QUEUE_CONNECTION'),
+            'messenger-bot.after_connection_token_stored.queue_retry_on_failure' => $bool('MESSENGER_BOT_LINK_QUEUE_RETRY', true),
+            'messenger-bot.comment_handlers.queue' => $bool('MESSENGER_BOT_COMMENT_HANDLERS_QUEUE', false),
+            'messenger-bot.comment_handlers.queue_name' => $string('MESSENGER_BOT_COMMENT_HANDLERS_QUEUE_NAME', 'webhooks'),
         ]);
     }
 
@@ -319,10 +342,12 @@ class InstallMessengerBotCommand extends Command
         $this->line('1. App: Messenger + Webhooks (Page). Connect your Page.');
         $this->line('2. Page token: use OAuth ('.$this->oauthConnectUrl().') or optional MESSENGER_BOT_PAGE_ACCESS_TOKEN in .env for tests.');
         $this->line('3. Dashboard: Webhooks → Page → Callback URL = {APP_URL}'.$path.' — Verify token = MESSENGER_BOT_VERIFY_TOKEN — Verify and Save.');
-        $this->line('4. Dashboard: enable the same webhook fields as `webhook_fields` in config (or rely on `messenger-bot:install` / `messenger-bot:sync-page` for subscribed_apps).');
-        $this->line('5. Re-run `php artisan messenger-bot:sync-page` after token or field list changes.');
+        $this->line('4. Dashboard: enable webhook fields from config — include **feed** for Page comments (see webhook_fields).');
+        $this->line('5. OAuth redirect URI must match Meta “Valid OAuth Redirect URIs” (HTTPS in production; APP_URL must not be http://localhost when Meta requires HTTPS).');
+        $this->line('6. Use a persistent cache store for tokens in production (MESSENGER_BOT_PAGE_TOKEN_CACHE_STORE / MESSENGER_BOT_CONNECTION_TOKEN_CACHE_STORE = redis or database).');
+        $this->line('7. Re-run `php artisan messenger-bot:sync-page` after token or field list changes (or set MESSENGER_BOT_AUTO_SUBSCRIBE_AFTER_OAUTH / MESSENGER_BOT_AUTO_SYNC_MENU_AFTER_OAUTH).');
         if ((bool) config('messenger-bot.tenancy.enabled', false)) {
-            $this->line('6. Multi-tenant: ensure MESSENGER_BOT_TENANCY_CONNECTION_MODEL points to your Page row model (or set MESSENGER_BOT_TENANCY_RESOLVER). OAuth: MessengerOAuth::redirectToFacebook($model).');
+            $this->line('8. Multi-tenant: MESSENGER_BOT_TENANCY_CONNECTION_MODEL + MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN (e.g. page_id). OAuth: MessengerOAuth::redirectToFacebook($model).');
         }
         $this->newLine();
     }

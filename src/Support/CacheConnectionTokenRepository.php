@@ -4,6 +4,8 @@ namespace MessengerBot\Support;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Event;
+use MessengerBot\Events\ConnectionTokenStored;
 use MessengerBot\Kernel\Contracts\ConnectionTokenRepository;
 use MessengerBot\Kernel\Credentials\PageAccessTokenRecord;
 use MessengerBot\Kernel\Tenancy\ConnectionId;
@@ -68,6 +70,14 @@ class CacheConnectionTokenRepository implements ConnectionTokenRepository
         $this->store()->put($this->tokenKey($conn), $row, $ttl);
         $this->store()->put($this->pageIndexKey($pageId), $connectionId, $ttl);
         $this->bumpPostsCacheVersion($conn);
+
+        Event::dispatch(new ConnectionTokenStored(
+            tenantId: $tenantId,
+            connectionId: $connectionId,
+            pageId: $pageId,
+            accessToken: $token,
+            expiresAt: is_int($expiresAt) ? $expiresAt : (is_numeric($expiresAt) ? (int) $expiresAt : null),
+        ));
     }
 
     public function forget(ConnectionId $connectionId): void

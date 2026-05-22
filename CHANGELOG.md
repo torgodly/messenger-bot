@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-05-07
+
+### Added
+
+- `ConnectionTokenStored` event dispatched after `ConnectionTokenRepository::put()` (cache implementation).
+- `ConnectablePageIdSynced` when tenant resolution uses the connection-token page index (DB row missing Page ID).
+- `after_connection_token_stored` config and `SyncPageProfileAfterOAuthListener` (+ `SyncPageProfileAfterOAuthJob`) for post-OAuth webhook subscribe and persistent menu sync.
+- Tenant resolver fallback via `getByPageId()` when Eloquent lookup misses.
+- `TenancyConfigurationValidator` — invalid `connection_model` throws in `local`/`testing`, logs critical in production.
+- Install `--tenant --model=` validates `MessengerConnectable`; expanded Meta checklist.
+- `comment_handlers` config (queue hints for host apps; no DB rules in package).
+
+### Changed
+
+- README restructured (quick start, Meta checklist, after-OAuth automation, events, Matager reference, troubleshooting, upgrade guide).
+- Tenancy docs: `connection_page_id_column` / `MESSENGER_BOT_TENANCY_PAGE_ID_COLUMN` (e.g. `page_id`).
+
+Composer: **`^2.1`**. Git tag: **`v2.1.0`**.
+
 ## [2.0.0] - 2026-05-07
 
 ### Added

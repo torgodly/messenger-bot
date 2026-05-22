@@ -3,6 +3,8 @@
 namespace MessengerBot;
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use MessengerBot\Console\ClearMessengerPageTokenCommand;
@@ -15,6 +17,8 @@ use MessengerBot\Contracts\PageAccessTokenSource;
 use MessengerBot\Conversation\ArrayConversationStore;
 use MessengerBot\Conversation\CacheConversationStore;
 use MessengerBot\Dispatching\HandlerDispatcher;
+use MessengerBot\Events\ConnectionTokenStored;
+use MessengerBot\Exceptions\InvalidConfigurationException;
 use MessengerBot\Facebook\Posts\DefaultPagePostsService;
 use MessengerBot\Http\ContextualPageAccessTokenProvider;
 use MessengerBot\Http\Controllers\FacebookOAuthController;
@@ -29,6 +33,7 @@ use MessengerBot\Kernel\Contracts\SyncsFacebookPagePosts;
 use MessengerBot\Kernel\Contracts\TenantResolver;
 use MessengerBot\Kernel\Tenancy\NullTenantResolver;
 use MessengerBot\Kernel\Tenancy\TenantContextHolder;
+use MessengerBot\Laravel\Listeners\SyncPageProfileAfterOAuthListener;
 use MessengerBot\Laravel\MessengerCurrentConnection;
 use MessengerBot\Laravel\MessengerOAuthService;
 use MessengerBot\Laravel\Posts\IlluminatePostsCache;
@@ -42,6 +47,7 @@ use MessengerBot\Profile\PersistentMenuConfigurator;
 use MessengerBot\Routing\MessageRouter;
 use MessengerBot\Support\CacheConnectionTokenRepository;
 use MessengerBot\Support\CachedPageAccessTokenRepository;
+use MessengerBot\Support\TenancyConfigurationValidator;
 use MessengerBot\Webhook\EntryIterator;
 use MessengerBot\Webhook\FeedChangeParser;
 use MessengerBot\Webhook\MessagingParser;
@@ -93,9 +99,11 @@ class MessengerBotServiceProvider extends ServiceProvider
                 return $app->make(trim($custom));
             }
 
-            $model = config('messenger-bot.tenancy.connection_model');
-            if (is_string($model) && trim($model) !== '' && class_exists(trim($model))) {
-                return $app->make(ConfigurableMessengerTenantResolver::class);
+            if (TenancyConfigurationValidator::connectionModelError() === null) {
+                $model = config('messenger-bot.tenancy.connection_model');
+                if (is_string($model) && trim($model) !== '') {
+                    return $app->make(ConfigurableMessengerTenantResolver::class);
+                }
             }
 
             return new NullTenantResolver;
@@ -195,6 +203,10 @@ class MessengerBotServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->validateTenancyConfiguration();
+
+        Event::listen(ConnectionTokenStored::class, SyncPageProfileAfterOAuthListener::class);
+
         $this->publishes([
             __DIR__.'/../config/messenger-bot.php' => config_path('messenger-bot.php'),
         ], 'messenger-bot-config');
@@ -252,5 +264,21 @@ class MessengerBotServiceProvider extends ServiceProvider
         Route::get($prefix.'/facebook/callback', [FacebookOAuthController::class, 'callback'])
             ->middleware($throttleCallback !== '' ? ['throttle:'.$throttleCallback] : [])
             ->name('messenger-bot.oauth.callback');
+    }
+
+    protected function validateTenancyConfiguration(): void
+    {
+        $error = TenancyConfigurationValidator::connectionModelError();
+        if ($error === null) {
+            return;
+        }
+
+        if ($this->app->environment(['local', 'testing'])) {
+            throw new InvalidConfigurationException($error);
+        }
+
+        Log::critical('messenger-bot: invalid tenancy configuration — tenant resolver disabled until fixed.', [
+            'error' => $error,
+        ]);
     }
 }
